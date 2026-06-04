@@ -1,6 +1,7 @@
 # ============================================================
 # APP STREAMLIT - MODELO PREDICTIVO PETG IZOD + COSTO
-# Autor: Proyecto PETG - Resistencia al impacto Izod
+# Versión sin carga manual de Excel
+# Archivo requerido en GitHub: datos_izod.xlsx
 # ============================================================
 
 import io
@@ -42,16 +43,8 @@ st.markdown(
         color: #52616B;
         margin-bottom: 25px;
     }
-    .box {
-        background-color: #F8FAFC;
-        padding: 20px;
-        border-radius: 14px;
-        border: 1px solid #E2E8F0;
-        margin-bottom: 18px;
-    }
-    .small-note {
-        font-size: 14px;
-        color: #64748B;
+    .block-container {
+        padding-top: 2rem;
     }
     </style>
     """,
@@ -62,8 +55,8 @@ st.markdown(
     """
     <div class="main-title">Modelo predictivo PETG - Resistencia al impacto Izod</div>
     <div class="subtitle">
-    Aplicación para estimar resistencia al impacto Izod en probetas PETG impresas por FDM,
-    usando red neuronal MLP, comparación con SVR y estimación de costo productivo.
+    Aplicación interactiva para estimar la resistencia al impacto Izod en probetas PETG impresas por FDM,
+    utilizando red neuronal MLP, comparación con SVR y estimación de costo productivo.
     </div>
     """,
     unsafe_allow_html=True
@@ -71,18 +64,10 @@ st.markdown(
 
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR - PARÁMETROS DE COSTO
 # ============================================================
 
-st.sidebar.header("Configuración de entrada")
-
-archivo = st.sidebar.file_uploader(
-    "Sube el archivo Excel de datos",
-    type=["xlsx"]
-)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Parámetros de costo")
+st.sidebar.header("Parámetros de costo")
 
 precio_petg_kg = st.sidebar.number_input(
     "Precio PETG (USD/kg)",
@@ -142,30 +127,22 @@ costo_postproceso = st.sidebar.number_input(
 
 st.sidebar.markdown("---")
 st.sidebar.info(
-    "Columnas requeridas en el Excel:\n\n"
-    "- Ensayo\n"
-    "- Temperatura_c\n"
-    "- Altura_capa_m_m\n"
-    "- Velocidad_m_m_s\n"
-    "- Resistencia_Izod_j_m\n"
-    "- Tipo_Dato"
+    "La app carga automáticamente el archivo datos_izod.xlsx desde GitHub."
 )
 
 
 # ============================================================
-# SI NO HAY ARCHIVO
+# CARGA AUTOMÁTICA DEL EXCEL
 # ============================================================
 
-if archivo is None:
-    st.info("Sube tu archivo Excel desde el panel lateral para iniciar la aplicación.")
+try:
+    df = pd.read_excel("datos_izod.xlsx")
+except FileNotFoundError:
+    st.error(
+        "No se encontró el archivo datos_izod.xlsx. "
+        "Sube ese archivo al repositorio de GitHub junto a app.py."
+    )
     st.stop()
-
-
-# ============================================================
-# CARGA Y LIMPIEZA DE DATOS
-# ============================================================
-
-df = pd.read_excel(archivo)
 
 df.columns = df.columns.astype(str).str.strip()
 
@@ -181,7 +158,7 @@ columnas_necesarias = [
 faltantes = [col for col in columnas_necesarias if col not in df.columns]
 
 if faltantes:
-    st.error(f"Faltan columnas en el Excel: {faltantes}")
+    st.error(f"Faltan columnas en datos_izod.xlsx: {faltantes}")
     st.stop()
 
 df["Tipo_Dato"] = df["Tipo_Dato"].astype(str).str.strip().str.lower()
@@ -239,7 +216,7 @@ scoring = {
     "RMSE": "neg_root_mean_squared_error"
 }
 
-with st.spinner("Evaluando modelo MLP y SVR..."):
+with st.spinner("Evaluando modelo MLP y modelo SVR..."):
     resultados_mlp_cv = cross_validate(
         modelo_mlp,
         X,
@@ -287,8 +264,7 @@ df_predicciones["Error"] = (
 )
 df_predicciones["Error_abs"] = np.abs(df_predicciones["Error"])
 df_predicciones["Error_porcentual_abs"] = (
-    df_predicciones["Error_abs"]
-    / df_predicciones["Resistencia_Izod_j_m"]
+    df_predicciones["Error_abs"] / df_predicciones["Resistencia_Izod_j_m"]
 ) * 100
 
 
@@ -397,7 +373,7 @@ componentes_costo = pd.DataFrame({
 
 
 # ============================================================
-# TABS
+# PESTAÑAS
 # ============================================================
 
 tab_datos, tab_modelo, tab_prediccion, tab_graficas, tab_costos, tab_exportar = st.tabs([
@@ -411,18 +387,17 @@ tab_datos, tab_modelo, tab_prediccion, tab_graficas, tab_costos, tab_exportar = 
 
 
 # ============================================================
-# TAB 1: DATOS
+# TAB DATOS
 # ============================================================
 
 with tab_datos:
-    st.markdown("### Datos cargados")
+    st.markdown("### Datos cargados automáticamente")
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Número de filas", df.shape[0])
     c2.metric("Número de columnas", df.shape[1])
     c3.metric("Variable respuesta", "Izod J/m")
 
-    st.markdown("#### Vista de datos")
     st.dataframe(df, use_container_width=True)
 
     col1, col2 = st.columns(2)
@@ -445,14 +420,13 @@ with tab_datos:
 
 
 # ============================================================
-# TAB 2: MODELO
+# TAB MODELO
 # ============================================================
 
 with tab_modelo:
     st.markdown("### Evaluación del modelo predictivo")
 
     c1, c2, c3, c4 = st.columns(4)
-
     c1.metric("R² MLP", f"{r2_mlp:.4f}")
     c2.metric("MAE MLP", f"{mae_mlp:.4f} J/m")
     c3.metric("RMSE MLP", f"{rmse_mlp:.4f} J/m")
@@ -461,11 +435,10 @@ with tab_modelo:
     st.markdown("#### Comparación de modelos")
     st.dataframe(comparacion_modelos, use_container_width=True)
 
-    st.markdown("#### Arquitectura usada")
     st.info(
         "Modelo principal: red neuronal MLP con 3 entradas, "
         "2 capas ocultas de 16 y 8 neuronas, y 1 salida. "
-        "Configuración: activation='relu', solver='adam', alpha=0.001."
+        "Modelo comparativo: SVR."
     )
 
     fig_comp_modelos, ax_comp_modelos = plt.subplots(figsize=(7, 5))
@@ -480,7 +453,7 @@ with tab_modelo:
 
 
 # ============================================================
-# TAB 3: PREDICCIÓN
+# TAB PREDICCIÓN
 # ============================================================
 
 with tab_prediccion:
@@ -567,19 +540,20 @@ with tab_prediccion:
         ascending=True
     ).head(10)
 
-    st.markdown("#### Combinaciones recomendadas")
-    st.dataframe(recomendaciones, use_container_width=True)
-
-    st.markdown("#### Top 10 combinaciones con mayor Izod predicho")
     mejores_izod = df_busqueda.sort_values(
         by="Izod_predicho_J_m",
         ascending=False
     ).head(10)
+
+    st.markdown("#### Combinaciones recomendadas")
+    st.dataframe(recomendaciones, use_container_width=True)
+
+    st.markdown("#### Top 10 combinaciones con mayor Izod predicho")
     st.dataframe(mejores_izod, use_container_width=True)
 
 
 # ============================================================
-# TAB 4: GRÁFICAS
+# TAB GRÁFICAS
 # ============================================================
 
 with tab_graficas:
@@ -633,12 +607,10 @@ with tab_graficas:
     )
 
     fig2, ax2 = plt.subplots(figsize=(12, 5))
-
     ax2.bar(
         df_errores["Ensayo"].astype(str),
         df_errores["Error_abs"]
     )
-
     ax2.set_xlabel("Ensayo")
     ax2.set_ylabel("Error absoluto (J/m)")
     ax2.set_title("Error absoluto de predicción por ensayo")
@@ -706,12 +678,10 @@ with tab_graficas:
     st.dataframe(df_importancia, use_container_width=True)
 
     fig5, ax5 = plt.subplots(figsize=(7, 5))
-
     ax5.bar(
         df_importancia["Variable"],
         df_importancia["Importancia_media"]
     )
-
     ax5.set_ylabel("Importancia media")
     ax5.set_xlabel("Variable")
     ax5.set_title("Importancia de variables en el modelo MLP")
@@ -764,12 +734,11 @@ with tab_graficas:
         f"Mapa de calor de resistencia Izod predicha\nAltura fija = {altura_fija:.2f} mm"
     )
     ax6.grid(alpha=0.3)
-
     st.pyplot(fig6)
 
 
 # ============================================================
-# TAB 5: COSTOS
+# TAB COSTOS
 # ============================================================
 
 with tab_costos:
@@ -850,7 +819,7 @@ with tab_costos:
 
 
 # ============================================================
-# TAB 6: EXPORTAR
+# TAB EXPORTAR
 # ============================================================
 
 with tab_exportar:
@@ -884,6 +853,9 @@ with tab_exportar:
         MAE MLP: {mae_mlp:.4f} J/m  
         RMSE MLP: {rmse_mlp:.4f} J/m  
         Modelo comparativo: SVR  
-        R² promedio SVR: {r2_svr:.4f}
+        R² promedio SVR: {r2_svr:.4f}  
+        Tarifa eléctrica usada: {tarifa_kwh:.2f} USD/kWh  
+        Precio PETG usado: {precio_petg_kg:.2f} USD/kg  
+        Masa estimada por probeta: {masa_por_probeta_g:.2f} g
         """
     )
