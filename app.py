@@ -70,14 +70,14 @@ st.markdown(
 # PARÁMETROS FIJOS DE COSTO
 # ============================================================
 
-PRECIO_PETG_KG = 20.00          # USD/kg
-MASA_PROBETA_G = 6.48           # g/probeta, estimado con volumen STL y densidad PETG
-TARIFA_KWH = 0.09               # USD/kWh
-POTENCIA_KW = 0.25              # kW, estimado para Creality K1
-COSTO_MAQUINA_H = 0.20          # USD/h
-COSTO_OPERADOR_PROBETA = 0.00   # USD/probeta
-COSTO_POSTPROCESO = 0.00        # USD/probeta
-PORCENTAJE_DESPERDICIO = 0.05   # 5 %
+PRECIO_PETG_KG = 20.00
+MASA_PROBETA_G = 6.48
+TARIFA_KWH = 0.09
+POTENCIA_KW = 0.25
+COSTO_MAQUINA_H = 0.20
+COSTO_OPERADOR_PROBETA = 0.00
+COSTO_POSTPROCESO = 0.00
+PORCENTAJE_DESPERDICIO = 0.05
 
 
 # ============================================================
@@ -463,8 +463,22 @@ df_busqueda = pd.DataFrame(
     columns=["Temperatura_c", "Altura_capa_m_m", "Velocidad_m_m_s"]
 )
 
-df_busqueda["Resistencia_predicha_J_m"] = modelo_final_mlp.predict(df_busqueda)
-df_busqueda["Costo_estimado_USD"] = modelo_costo.predict(df_busqueda)
+df_busqueda["Resistencia_predicha_J_m"] = modelo_final_mlp.predict(
+    df_busqueda[[
+        "Temperatura_c",
+        "Altura_capa_m_m",
+        "Velocidad_m_m_s"
+    ]]
+)
+
+df_busqueda["Costo_estimado_USD"] = modelo_costo.predict(
+    df_busqueda[[
+        "Temperatura_c",
+        "Altura_capa_m_m",
+        "Velocidad_m_m_s"
+    ]]
+)
+
 df_busqueda["Eficiencia_resistencia_costo"] = (
     df_busqueda["Resistencia_predicha_J_m"] / df_busqueda["Costo_estimado_USD"]
 )
