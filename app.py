@@ -1,7 +1,7 @@
 # ============================================================
 # APP STREAMLIT - PETG FDM
 # Modelo predictivo de resistencia al impacto + costo productivo
-# Versión para exposición interactiva
+# Versión interactiva para exposición
 # ============================================================
 
 import io
@@ -16,6 +16,7 @@ from sklearn.compose import TransformedTargetRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
 from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import RepeatedKFold, cross_validate
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from sklearn.inspection import permutation_importance
@@ -45,16 +46,8 @@ st.markdown(
         color: #475569;
         margin-bottom: 20px;
     }
-    .info-card {
-        background-color: #F8FAFC;
-        padding: 18px;
-        border-radius: 14px;
-        border: 1px solid #E2E8F0;
-        margin-bottom: 16px;
-    }
-    .metric-note {
-        font-size: 13px;
-        color: #64748B;
+    .block-container {
+        padding-top: 2rem;
     }
     </style>
     """,
@@ -78,7 +71,7 @@ st.markdown(
 # ============================================================
 
 PRECIO_PETG_KG = 20.00          # USD/kg
-MASA_PROBETA_G = 6.48           # g/probeta, estimado con volumen y densidad PETG
+MASA_PROBETA_G = 6.48           # g/probeta, estimado con volumen STL y densidad PETG
 TARIFA_KWH = 0.09               # USD/kWh
 POTENCIA_KW = 0.25              # kW, estimado para Creality K1
 COSTO_MAQUINA_H = 0.20          # USD/h
@@ -106,6 +99,7 @@ def cargar_datos():
     ]
 
     faltantes = [col for col in columnas_necesarias if col not in df.columns]
+
     if faltantes:
         raise ValueError(f"Faltan columnas en datos_izod.xlsx: {faltantes}")
 
@@ -171,16 +165,12 @@ def crear_modelo_svr():
     )
 
 
-modelo_mlp = crear_modelo_mlp()
-modelo_svr = crear_modelo_svr()
-
-
 # ============================================================
-# EVALUACIÓN
+# EVALUACIÓN CON VALIDACIÓN CRUZADA
 # ============================================================
 
 @st.cache_data
-def evaluar_modelos(X, y):
+def evaluar_modelos(X_data, y_data):
     cv = RepeatedKFold(
         n_splits=5,
         n_repeats=10,
@@ -198,8 +188,8 @@ def evaluar_modelos(X, y):
 
     resultados_mlp = cross_validate(
         mlp,
-        X,
-        y,
+        X_data,
+        y_data,
         cv=cv,
         scoring=scoring,
         return_train_score=False
@@ -207,8 +197,8 @@ def evaluar_modelos(X, y):
 
     resultados_svr = cross_validate(
         svr,
-        X,
-        y,
+        X_data,
+        y_data,
         cv=cv,
         scoring=scoring,
         return_train_score=False
@@ -277,7 +267,7 @@ df_predicciones["Error_porcentual_abs"] = (
 
 
 # ============================================================
-# R2 DEMOSTRATIVO CON 20 PRIMEROS DATOS
+# R2 DE AJUSTE CON LOS 20 PRIMEROS DATOS
 # ============================================================
 
 df_20 = df.head(20).copy()
@@ -332,53 +322,55 @@ def crear_tabla_costos():
         ("A20", 6/60 + 24/3600,   1),
     ]
 
-    df_costos = pd.DataFrame(
+    df_costos_local = pd.DataFrame(
         datos_tiempo,
         columns=["Codigo_costo", "Tiempo_lote_h", "Cantidad_probetas_lote"]
     )
 
-    df_costos["Tiempo_por_probeta_h"] = (
-        df_costos["Tiempo_lote_h"] / df_costos["Cantidad_probetas_lote"]
+    df_costos_local["Tiempo_por_probeta_h"] = (
+        df_costos_local["Tiempo_lote_h"] / df_costos_local["Cantidad_probetas_lote"]
     )
 
-    df_costos["Masa_por_probeta_g"] = MASA_PROBETA_G
-    df_costos["Masa_lote_g"] = (
-        df_costos["Masa_por_probeta_g"] * df_costos["Cantidad_probetas_lote"]
+    df_costos_local["Masa_por_probeta_g"] = MASA_PROBETA_G
+
+    df_costos_local["Masa_lote_g"] = (
+        df_costos_local["Masa_por_probeta_g"] * df_costos_local["Cantidad_probetas_lote"]
     )
 
-    df_costos["Costo_material_USD"] = (
-        (df_costos["Masa_por_probeta_g"] / 1000) * PRECIO_PETG_KG
+    df_costos_local["Costo_material_USD"] = (
+        (df_costos_local["Masa_por_probeta_g"] / 1000) * PRECIO_PETG_KG
     )
 
-    df_costos["Costo_energia_USD"] = (
-        df_costos["Tiempo_por_probeta_h"] * POTENCIA_KW * TARIFA_KWH
+    df_costos_local["Costo_energia_USD"] = (
+        df_costos_local["Tiempo_por_probeta_h"] * POTENCIA_KW * TARIFA_KWH
     )
 
-    df_costos["Costo_maquina_USD"] = (
-        df_costos["Tiempo_por_probeta_h"] * COSTO_MAQUINA_H
+    df_costos_local["Costo_maquina_USD"] = (
+        df_costos_local["Tiempo_por_probeta_h"] * COSTO_MAQUINA_H
     )
 
-    df_costos["Costo_desperdicio_USD"] = (
-        df_costos["Costo_material_USD"] * PORCENTAJE_DESPERDICIO
+    df_costos_local["Costo_desperdicio_USD"] = (
+        df_costos_local["Costo_material_USD"] * PORCENTAJE_DESPERDICIO
     )
 
-    df_costos["Costo_operador_USD"] = COSTO_OPERADOR_PROBETA
-    df_costos["Costo_postproceso_USD"] = COSTO_POSTPROCESO
+    df_costos_local["Costo_operador_USD"] = COSTO_OPERADOR_PROBETA
+    df_costos_local["Costo_postproceso_USD"] = COSTO_POSTPROCESO
 
-    df_costos["Costo_total_USD"] = (
-        df_costos["Costo_material_USD"]
-        + df_costos["Costo_energia_USD"]
-        + df_costos["Costo_maquina_USD"]
-        + df_costos["Costo_desperdicio_USD"]
-        + df_costos["Costo_operador_USD"]
-        + df_costos["Costo_postproceso_USD"]
+    df_costos_local["Costo_total_USD"] = (
+        df_costos_local["Costo_material_USD"]
+        + df_costos_local["Costo_energia_USD"]
+        + df_costos_local["Costo_maquina_USD"]
+        + df_costos_local["Costo_desperdicio_USD"]
+        + df_costos_local["Costo_operador_USD"]
+        + df_costos_local["Costo_postproceso_USD"]
     )
 
-    df_costos["Costo_total_lote_USD"] = (
-        df_costos["Costo_total_USD"] * df_costos["Cantidad_probetas_lote"]
+    df_costos_local["Costo_total_lote_USD"] = (
+        df_costos_local["Costo_total_USD"]
+        * df_costos_local["Cantidad_probetas_lote"]
     )
 
-    return df_costos
+    return df_costos_local
 
 
 df_costos = crear_tabla_costos()
@@ -429,6 +421,29 @@ componentes_costo = pd.DataFrame({
 
 
 # ============================================================
+# MODELO AUXILIAR DE COSTO
+# ============================================================
+
+X_costo = df_resultado[[
+    "Temperatura_c",
+    "Altura_capa_m_m",
+    "Velocidad_m_m_s"
+]]
+
+y_costo = df_resultado["Costo_total_USD"]
+
+modelo_costo = Pipeline([
+    ("scaler", StandardScaler()),
+    ("rf", RandomForestRegressor(
+        n_estimators=300,
+        random_state=42
+    ))
+])
+
+modelo_costo.fit(X_costo, y_costo)
+
+
+# ============================================================
 # PREDICCIÓN INVERSA
 # ============================================================
 
@@ -449,6 +464,10 @@ df_busqueda = pd.DataFrame(
 )
 
 df_busqueda["Resistencia_predicha_J_m"] = modelo_final_mlp.predict(df_busqueda)
+df_busqueda["Costo_estimado_USD"] = modelo_costo.predict(df_busqueda)
+df_busqueda["Eficiencia_resistencia_costo"] = (
+    df_busqueda["Resistencia_predicha_J_m"] / df_busqueda["Costo_estimado_USD"]
+)
 
 
 # ============================================================
@@ -475,18 +494,18 @@ with tab_inicio:
     c1, c2, c3, c4 = st.columns(4)
 
     c1.metric("Datos usados", df.shape[0])
-    c2.metric("Entradas", "3 variables")
-    c3.metric("Salida", "Resistencia")
+    c2.metric("Variables de entrada", "3")
+    c3.metric("Variable de salida", "Resistencia")
     c4.metric("Material", "PETG")
 
-    st.markdown("#### ¿Qué hace esta app?")
     st.info(
-        "La aplicación predice la resistencia al impacto de probetas PETG impresas por FDM "
-        "a partir de temperatura de impresión, altura de capa y velocidad. "
-        "Además, estima el costo productivo y muestra la relación entre resistencia y costo."
+        "Esta aplicación predice la resistencia al impacto de probetas PETG impresas por FDM "
+        "a partir de la temperatura de impresión, altura de capa y velocidad. "
+        "También estima el costo productivo y muestra la relación entre resistencia y costo."
     )
 
     st.markdown("#### Parámetros de costo asumidos")
+
     st.dataframe(
         pd.DataFrame({
             "Parámetro": [
@@ -589,9 +608,8 @@ with tab_modelo:
     fig_modelos.update_layout(showlegend=False, yaxis_range=[0, 1.05])
     st.plotly_chart(fig_modelos, use_container_width=True)
 
-    st.markdown("#### Arquitectura de la red neuronal")
     st.info(
-        "Modelo principal: MLP con 3 entradas, dos capas ocultas de 16 y 8 neuronas, "
+        "La red neuronal MLP utiliza 3 entradas, dos capas ocultas de 16 y 8 neuronas, "
         "y una salida correspondiente a la resistencia al impacto predicha."
     )
 
@@ -603,7 +621,10 @@ with tab_modelo:
 with tab_explorar:
     st.markdown("### Explorador interactivo")
 
-    st.markdown("Mueve los controles para observar cómo cambia la resistencia al impacto predicha.")
+    st.markdown(
+        "Mueve los controles para observar cómo cambian la resistencia al impacto predicha, "
+        "el costo estimado y la eficiencia resistencia/costo."
+    )
 
     col1, col2, col3 = st.columns(3)
 
@@ -641,18 +662,29 @@ with tab_explorar:
     })
 
     prediccion = modelo_final_mlp.predict(nuevo_dato)[0]
+    costo_estimado = modelo_costo.predict(nuevo_dato)[0]
+    eficiencia = prediccion / costo_estimado if costo_estimado > 0 else np.nan
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
+
     c1.metric("Temperatura", f"{temperatura} °C")
     c2.metric("Altura de capa", f"{altura:.2f} mm")
     c3.metric("Velocidad", f"{velocidad} mm/s")
     c4.metric("Resistencia predicha", f"{prediccion:.2f} J/m")
+    c5.metric("Costo estimado", f"{costo_estimado:.4f} USD")
+
+    st.info(
+        f"Con estos parámetros, el modelo estima una resistencia al impacto de "
+        f"{prediccion:.2f} J/m y un costo aproximado de impresión de "
+        f"{costo_estimado:.4f} USD por probeta. "
+        f"La eficiencia resistencia/costo es de {eficiencia:.2f} J/m por USD."
+    )
 
     st.markdown("---")
     st.markdown("### Predicción inversa")
 
-    izod_objetivo = st.slider(
-        "Selecciona una resistencia objetivo (J/m)",
+    resistencia_objetivo = st.slider(
+        "Selecciona una resistencia al impacto objetivo (J/m)",
         min_value=14.0,
         max_value=35.0,
         value=25.0,
@@ -660,7 +692,7 @@ with tab_explorar:
     )
 
     df_busqueda["Diferencia_objetivo"] = np.abs(
-        df_busqueda["Resistencia_predicha_J_m"] - izod_objetivo
+        df_busqueda["Resistencia_predicha_J_m"] - resistencia_objetivo
     )
 
     recomendaciones = df_busqueda.sort_values(
@@ -671,13 +703,13 @@ with tab_explorar:
     st.markdown("#### Combinaciones más cercanas al objetivo")
     st.dataframe(recomendaciones, use_container_width=True)
 
-    mejores_izod = df_busqueda.sort_values(
+    mejores_resistencias = df_busqueda.sort_values(
         by="Resistencia_predicha_J_m",
         ascending=False
     ).head(10)
 
     st.markdown("#### Top 10 combinaciones con mayor resistencia predicha")
-    st.dataframe(mejores_izod, use_container_width=True)
+    st.dataframe(mejores_resistencias, use_container_width=True)
 
 
 # ============================================================
@@ -709,8 +741,15 @@ with tab_graficas:
         }
     )
 
-    min_val = min(df_resultado["Resistencia_Izod_j_m"].min(), df_resultado["Resistencia_predicha_J_m"].min())
-    max_val = max(df_resultado["Resistencia_Izod_j_m"].max(), df_resultado["Resistencia_predicha_J_m"].max())
+    min_val = min(
+        df_resultado["Resistencia_Izod_j_m"].min(),
+        df_resultado["Resistencia_predicha_J_m"].min()
+    )
+
+    max_val = max(
+        df_resultado["Resistencia_Izod_j_m"].max(),
+        df_resultado["Resistencia_predicha_J_m"].max()
+    )
 
     fig_real_pred.add_trace(
         go.Scatter(
@@ -722,6 +761,11 @@ with tab_graficas:
     )
 
     st.plotly_chart(fig_real_pred, use_container_width=True)
+
+    st.caption(
+        "Interpretación: los puntos más cercanos a la línea ideal indican mejores predicciones. "
+        "Si un punto está muy alejado de la línea, significa que el modelo tuvo mayor error para ese ensayo."
+    )
 
     st.markdown("#### 2. Error absoluto por ensayo")
 
@@ -747,6 +791,11 @@ with tab_graficas:
     )
 
     st.plotly_chart(fig_error, use_container_width=True)
+
+    st.caption(
+        "Interpretación: esta gráfica muestra qué ensayos fueron más difíciles de predecir. "
+        "Barras más altas indican mayor diferencia entre la resistencia experimental y la resistencia predicha."
+    )
 
     st.markdown("#### 3. Importancia de variables")
 
@@ -777,6 +826,11 @@ with tab_graficas:
     )
 
     st.plotly_chart(fig_importancia, use_container_width=True)
+
+    st.caption(
+        "Interpretación: una variable con mayor importancia significa que, al alterarla, "
+        "el desempeño del modelo cambia más. Por eso se considera más influyente en la predicción."
+    )
 
     st.dataframe(df_importancia, use_container_width=True)
 
@@ -822,6 +876,12 @@ with tab_graficas:
 
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
+    st.caption(
+        "Interpretación: el color representa la resistencia al impacto predicha. "
+        "Las zonas con valores más altos indican combinaciones donde el modelo estima mayor resistencia, "
+        "manteniendo fija la altura de capa seleccionada."
+    )
+
     st.markdown("#### 5. Relación entre resistencia al impacto y costo de impresión")
 
     fig_res_cost = px.scatter(
@@ -849,6 +909,11 @@ with tab_graficas:
 
     st.plotly_chart(fig_res_cost, use_container_width=True)
 
+    st.caption(
+        "Interpretación: esta gráfica permite comparar desempeño mecánico y costo. "
+        "Lo ideal es buscar puntos con alta resistencia al impacto y bajo costo de impresión."
+    )
+
     st.markdown("#### 6. Eficiencia resistencia/costo")
 
     df_eficiencia = df_resultado.sort_values(
@@ -869,6 +934,11 @@ with tab_graficas:
     )
 
     st.plotly_chart(fig_ef, use_container_width=True)
+
+    st.caption(
+        "Interpretación: esta gráfica muestra cuánta resistencia al impacto se obtiene por cada dólar invertido. "
+        "Barras más altas representan combinaciones más eficientes desde el punto de vista técnico-productivo."
+    )
 
 
 # ============================================================
@@ -920,7 +990,7 @@ with tab_costos:
 
     st.plotly_chart(fig_comp, use_container_width=True)
 
-    st.markdown("#### Costo por ensayo")
+    st.markdown("#### Costo por impresión")
 
     fig_costo = px.bar(
         df_costos,
@@ -954,7 +1024,7 @@ with tab_exportar:
         df_costos.to_excel(writer, sheet_name="Costos", index=False)
         componentes_costo.to_excel(writer, sheet_name="Componentes_costo", index=False)
         recomendaciones.to_excel(writer, sheet_name="Prediccion_inversa", index=False)
-        mejores_izod.to_excel(writer, sheet_name="Mejores_resistencias", index=False)
+        mejores_resistencias.to_excel(writer, sheet_name="Mejores_resistencias", index=False)
 
     st.download_button(
         label="Descargar resultados en Excel",
