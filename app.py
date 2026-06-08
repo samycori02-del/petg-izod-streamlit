@@ -1,7 +1,7 @@
 # ============================================================
 # APP STREAMLIT - PETG FDM
 # Modelo predictivo de resistencia al impacto + costo productivo
-# Versión interactiva para exposición
+# Red neuronal MLP 3-5-1
 # ============================================================
 
 import io
@@ -12,12 +12,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from sklearn.pipeline import Pipeline
-from sklearn.compose import TransformedTargetRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
-from sklearn.svm import SVR
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import RepeatedKFold, cross_validate
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from sklearn.inspection import permutation_importance
 
@@ -58,8 +54,8 @@ st.markdown(
     """
     <div class="main-title">Modelo predictivo PETG - Resistencia al impacto</div>
     <div class="subtitle">
-    Aplicación interactiva para estimar la resistencia al impacto de probetas PETG impresas por FDM,
-    comparar modelos predictivos y visualizar el costo productivo de impresión.
+    Aplicación interactiva para estimar la resistencia al impacto y el costo productivo
+    de probetas PETG impresas por FDM mediante una red neuronal MLP 3-5-1.
     </div>
     """,
     unsafe_allow_html=True
@@ -70,14 +66,14 @@ st.markdown(
 # PARÁMETROS FIJOS DE COSTO
 # ============================================================
 
-PRECIO_PETG_KG = 20.00
-MASA_PROBETA_G = 6.48
-TARIFA_KWH = 0.09
-POTENCIA_KW = 0.25
-COSTO_MAQUINA_H = 0.20
-COSTO_OPERADOR_PROBETA = 0.00
-COSTO_POSTPROCESO = 0.00
-PORCENTAJE_DESPERDICIO = 0.05
+PRECIO_PETG_KG = 20.00          # USD/kg
+MASA_PROBETA_G = 6.48           # g/probeta
+TARIFA_KWH = 0.09               # USD/kWh
+POTENCIA_KW = 0.25              # kW
+COSTO_MAQUINA_H = 0.20          # USD/h
+COSTO_OPERADOR_PROBETA = 0.00   # USD/probeta
+COSTO_POSTPROCESO = 0.00        # USD/probeta
+PORCENTAJE_DESPERDICIO = 0.05   # 5 %
 
 
 # ============================================================
@@ -122,174 +118,89 @@ except Exception as e:
 
 
 # ============================================================
-# VARIABLES DEL MODELO
+# VARIABLES DE ENTRADA
 # ============================================================
 
-X = df[["Temperatura_c", "Altura_capa_m_m", "Velocidad_m_m_s"]]
-y = df["Resistencia_Izod_j_m"]
+X = df[[
+    "Temperatura_c",
+    "Altura_capa_m_m",
+    "Velocidad_m_m_s"
+]]
 
-
-# ============================================================
-# MODELOS
-# ============================================================
-
-def crear_modelo_mlp():
-    return TransformedTargetRegressor(
-        regressor=Pipeline([
-            ("scaler_X", StandardScaler()),
-            ("mlp", MLPRegressor(
-                hidden_layer_sizes=(16, 8),
-                activation="relu",
-                solver="adam",
-                alpha=0.001,
-                max_iter=10000,
-                random_state=42
-            ))
-        ]),
-        transformer=StandardScaler()
-    )
-
-
-def crear_modelo_svr():
-    return TransformedTargetRegressor(
-        regressor=Pipeline([
-            ("scaler_X", StandardScaler()),
-            ("svr", SVR(
-                kernel="rbf",
-                C=1.0,
-                epsilon=0.1,
-                gamma="scale"
-            ))
-        ]),
-        transformer=StandardScaler()
-    )
+y_resistencia = df["Resistencia_Izod_j_m"]
 
 
 # ============================================================
-# EVALUACIÓN CON VALIDACIÓN CRUZADA
+# MODELO MLP 3-5-1
 # ============================================================
 
-@st.cache_data
-def evaluar_modelos(X_data, y_data):
-    cv = RepeatedKFold(
-        n_splits=5,
-        n_repeats=10,
-        random_state=42
-    )
-
-    scoring = {
-        "R2": "r2",
-        "MAE": "neg_mean_absolute_error",
-        "RMSE": "neg_root_mean_squared_error"
-    }
-
-    mlp = crear_modelo_mlp()
-    svr = crear_modelo_svr()
-
-    resultados_mlp = cross_validate(
-        mlp,
-        X_data,
-        y_data,
-        cv=cv,
-        scoring=scoring,
-        return_train_score=False
-    )
-
-    resultados_svr = cross_validate(
-        svr,
-        X_data,
-        y_data,
-        cv=cv,
-        scoring=scoring,
-        return_train_score=False
-    )
-
-    comparacion = pd.DataFrame({
-        "Modelo": ["Red neuronal MLP", "SVR"],
-        "R2_validado": [
-            np.mean(resultados_mlp["test_R2"]),
-            np.mean(resultados_svr["test_R2"])
-        ],
-        "R2_desviacion": [
-            np.std(resultados_mlp["test_R2"]),
-            np.std(resultados_svr["test_R2"])
-        ],
-        "MAE": [
-            -np.mean(resultados_mlp["test_MAE"]),
-            -np.mean(resultados_svr["test_MAE"])
-        ],
-        "RMSE": [
-            -np.mean(resultados_mlp["test_RMSE"]),
-            -np.mean(resultados_svr["test_RMSE"])
-        ]
-    })
-
-    return comparacion
-
-
-comparacion_modelos = evaluar_modelos(X, y)
-
-r2_mlp_validado = comparacion_modelos.loc[
-    comparacion_modelos["Modelo"] == "Red neuronal MLP",
-    "R2_validado"
-].values[0]
-
-mae_mlp_validado = comparacion_modelos.loc[
-    comparacion_modelos["Modelo"] == "Red neuronal MLP",
-    "MAE"
-].values[0]
-
-rmse_mlp_validado = comparacion_modelos.loc[
-    comparacion_modelos["Modelo"] == "Red neuronal MLP",
-    "RMSE"
-].values[0]
+def crear_modelo_mlp_351():
+    """
+    Red neuronal MLP:
+    3 entradas -> 5 neuronas -> 1 salida
+    """
+    return Pipeline([
+        ("scaler", StandardScaler()),
+        ("mlp", MLPRegressor(
+            hidden_layer_sizes=(5,),
+            activation="tanh",
+            solver="lbfgs",
+            alpha=0.01,
+            max_iter=10000,
+            random_state=42
+        ))
+    ])
 
 
 # ============================================================
-# ENTRENAMIENTO FINAL CON TODOS LOS DATOS
+# MODELO DE RESISTENCIA
 # ============================================================
 
-modelo_final_mlp = crear_modelo_mlp()
-modelo_final_mlp.fit(X, y)
+modelo_resistencia = crear_modelo_mlp_351()
+modelo_resistencia.fit(X, y_resistencia)
 
-y_pred_total = modelo_final_mlp.predict(X)
+df_resultado = df.copy()
+df_resultado["Resistencia_predicha_J_m"] = modelo_resistencia.predict(X)
 
-df_predicciones = df.copy()
-df_predicciones["Resistencia_predicha_J_m"] = y_pred_total
-df_predicciones["Error"] = (
-    df_predicciones["Resistencia_Izod_j_m"]
-    - df_predicciones["Resistencia_predicha_J_m"]
+df_resultado["Error_resistencia"] = (
+    df_resultado["Resistencia_Izod_j_m"]
+    - df_resultado["Resistencia_predicha_J_m"]
 )
-df_predicciones["Error_abs"] = np.abs(df_predicciones["Error"])
-df_predicciones["Error_porcentual_abs"] = (
-    df_predicciones["Error_abs"] / df_predicciones["Resistencia_Izod_j_m"]
+
+df_resultado["Error_abs_resistencia"] = np.abs(
+    df_resultado["Error_resistencia"]
+)
+
+df_resultado["Error_porcentual_abs_resistencia"] = (
+    df_resultado["Error_abs_resistencia"]
+    / df_resultado["Resistencia_Izod_j_m"]
 ) * 100
 
+r2_resistencia = r2_score(
+    df_resultado["Resistencia_Izod_j_m"],
+    df_resultado["Resistencia_predicha_J_m"]
+)
 
-# ============================================================
-# R2 DE AJUSTE CON LOS 20 PRIMEROS DATOS
-# ============================================================
+mae_resistencia = mean_absolute_error(
+    df_resultado["Resistencia_Izod_j_m"],
+    df_resultado["Resistencia_predicha_J_m"]
+)
 
-df_20 = df.head(20).copy()
-
-X_20 = df_20[["Temperatura_c", "Altura_capa_m_m", "Velocidad_m_m_s"]]
-y_20 = df_20["Resistencia_Izod_j_m"]
-
-modelo_20 = crear_modelo_mlp()
-modelo_20.fit(X_20, y_20)
-y_20_pred = modelo_20.predict(X_20)
-
-r2_ajuste_20 = r2_score(y_20, y_20_pred)
-mae_ajuste_20 = mean_absolute_error(y_20, y_20_pred)
-rmse_ajuste_20 = np.sqrt(mean_squared_error(y_20, y_20_pred))
+rmse_resistencia = np.sqrt(mean_squared_error(
+    df_resultado["Resistencia_Izod_j_m"],
+    df_resultado["Resistencia_predicha_J_m"]
+))
 
 
 # ============================================================
-# COSTOS
+# TABLA DE COSTOS CALCULADOS
 # ============================================================
 
 def crear_tabla_costos():
     datos_tiempo = [
+        # Código, Tiempo_lote_h, Cantidad_probetas_lote
+
+        # L1-L9: lotes de 5 probetas
         ("L1",  1 + 44/60,        5),
         ("L2",  40/60 + 3/3600,   5),
         ("L3",  29/60 + 15/3600,  5),
@@ -300,6 +211,7 @@ def crear_tabla_costos():
         ("L8",  1 + 6/60,         5),
         ("L9",  31/60 + 39/3600,  5),
 
+        # A1-A20: unitarias
         ("A1",  13/60 + 1/3600,   1),
         ("A2",  9/60 + 3/3600,    1),
         ("A3",  7/60 + 33/3600,   1),
@@ -324,33 +236,44 @@ def crear_tabla_costos():
 
     df_costos_local = pd.DataFrame(
         datos_tiempo,
-        columns=["Codigo_costo", "Tiempo_lote_h", "Cantidad_probetas_lote"]
+        columns=[
+            "Codigo_costo",
+            "Tiempo_lote_h",
+            "Cantidad_probetas_lote"
+        ]
     )
 
     df_costos_local["Tiempo_por_probeta_h"] = (
-        df_costos_local["Tiempo_lote_h"] / df_costos_local["Cantidad_probetas_lote"]
+        df_costos_local["Tiempo_lote_h"]
+        / df_costos_local["Cantidad_probetas_lote"]
     )
 
     df_costos_local["Masa_por_probeta_g"] = MASA_PROBETA_G
 
     df_costos_local["Masa_lote_g"] = (
-        df_costos_local["Masa_por_probeta_g"] * df_costos_local["Cantidad_probetas_lote"]
+        df_costos_local["Masa_por_probeta_g"]
+        * df_costos_local["Cantidad_probetas_lote"]
     )
 
     df_costos_local["Costo_material_USD"] = (
-        (df_costos_local["Masa_por_probeta_g"] / 1000) * PRECIO_PETG_KG
+        (df_costos_local["Masa_por_probeta_g"] / 1000)
+        * PRECIO_PETG_KG
     )
 
     df_costos_local["Costo_energia_USD"] = (
-        df_costos_local["Tiempo_por_probeta_h"] * POTENCIA_KW * TARIFA_KWH
+        df_costos_local["Tiempo_por_probeta_h"]
+        * POTENCIA_KW
+        * TARIFA_KWH
     )
 
     df_costos_local["Costo_maquina_USD"] = (
-        df_costos_local["Tiempo_por_probeta_h"] * COSTO_MAQUINA_H
+        df_costos_local["Tiempo_por_probeta_h"]
+        * COSTO_MAQUINA_H
     )
 
     df_costos_local["Costo_desperdicio_USD"] = (
-        df_costos_local["Costo_material_USD"] * PORCENTAJE_DESPERDICIO
+        df_costos_local["Costo_material_USD"]
+        * PORCENTAJE_DESPERDICIO
     )
 
     df_costos_local["Costo_operador_USD"] = COSTO_OPERADOR_PROBETA
@@ -376,29 +299,92 @@ def crear_tabla_costos():
 df_costos = crear_tabla_costos()
 
 
+# ============================================================
+# ASIGNACIÓN DE COSTO A CADA ENSAYO
+# ============================================================
+
 def asignar_codigo_costo(ensayo):
     ensayo = str(ensayo).strip()
 
+    # A1-1, A1-2, etc. pertenecen al lote L1
     if "-" in ensayo:
         grupo = ensayo.split("-")[0]
         numero = grupo.replace("A", "")
         return f"L{numero}"
 
+    # A1, A2, ..., A20 son unitarias
     return ensayo
 
 
-df_predicciones["Codigo_costo"] = df_predicciones["Ensayo"].apply(asignar_codigo_costo)
+df_resultado["Codigo_costo"] = df_resultado["Ensayo"].apply(asignar_codigo_costo)
 
-df_resultado = df_predicciones.merge(
+df_resultado = df_resultado.merge(
     df_costos,
     on="Codigo_costo",
     how="left"
 )
 
-df_resultado["Eficiencia_resistencia_costo"] = (
-    df_resultado["Resistencia_predicha_J_m"] / df_resultado["Costo_total_USD"]
+if df_resultado["Costo_total_USD"].isna().any():
+    st.warning(
+        "Algunos ensayos no tienen costo asignado. Revisa los nombres de la columna Ensayo."
+    )
+
+
+# ============================================================
+# MODELO DE COSTO MLP 3-5-1
+# ============================================================
+
+X_costo = df_resultado[[
+    "Temperatura_c",
+    "Altura_capa_m_m",
+    "Velocidad_m_m_s"
+]]
+
+y_costo = df_resultado["Costo_total_USD"]
+
+modelo_costo = crear_modelo_mlp_351()
+modelo_costo.fit(X_costo, y_costo)
+
+df_resultado["Costo_predicho_USD"] = modelo_costo.predict(X_costo)
+
+df_resultado["Error_costo_USD"] = (
+    df_resultado["Costo_total_USD"]
+    - df_resultado["Costo_predicho_USD"]
 )
 
+df_resultado["Error_abs_costo_USD"] = np.abs(
+    df_resultado["Error_costo_USD"]
+)
+
+r2_costo = r2_score(
+    df_resultado["Costo_total_USD"],
+    df_resultado["Costo_predicho_USD"]
+)
+
+mae_costo = mean_absolute_error(
+    df_resultado["Costo_total_USD"],
+    df_resultado["Costo_predicho_USD"]
+)
+
+rmse_costo = np.sqrt(mean_squared_error(
+    df_resultado["Costo_total_USD"],
+    df_resultado["Costo_predicho_USD"]
+))
+
+
+# ============================================================
+# EFICIENCIA TÉCNICO-PRODUCTIVA
+# ============================================================
+
+df_resultado["Eficiencia_resistencia_costo"] = (
+    df_resultado["Resistencia_predicha_J_m"]
+    / df_resultado["Costo_predicho_USD"]
+)
+
+
+# ============================================================
+# COMPONENTES DE COSTO
+# ============================================================
 
 componentes_costo = pd.DataFrame({
     "Componente": [
@@ -421,30 +407,7 @@ componentes_costo = pd.DataFrame({
 
 
 # ============================================================
-# MODELO AUXILIAR DE COSTO
-# ============================================================
-
-X_costo = df_resultado[[
-    "Temperatura_c",
-    "Altura_capa_m_m",
-    "Velocidad_m_m_s"
-]]
-
-y_costo = df_resultado["Costo_total_USD"]
-
-modelo_costo = Pipeline([
-    ("scaler", StandardScaler()),
-    ("rf", RandomForestRegressor(
-        n_estimators=300,
-        random_state=42
-    ))
-])
-
-modelo_costo.fit(X_costo, y_costo)
-
-
-# ============================================================
-# PREDICCIÓN INVERSA
+# PREDICCIÓN INVERSA / BÚSQUEDA DE COMBINACIONES
 # ============================================================
 
 temperaturas_inv = np.arange(230, 261, 1)
@@ -460,10 +423,14 @@ for temp in temperaturas_inv:
 
 df_busqueda = pd.DataFrame(
     combinaciones,
-    columns=["Temperatura_c", "Altura_capa_m_m", "Velocidad_m_m_s"]
+    columns=[
+        "Temperatura_c",
+        "Altura_capa_m_m",
+        "Velocidad_m_m_s"
+    ]
 )
 
-df_busqueda["Resistencia_predicha_J_m"] = modelo_final_mlp.predict(
+df_busqueda["Resistencia_predicha_J_m"] = modelo_resistencia.predict(
     df_busqueda[[
         "Temperatura_c",
         "Altura_capa_m_m",
@@ -471,7 +438,7 @@ df_busqueda["Resistencia_predicha_J_m"] = modelo_final_mlp.predict(
     ]]
 )
 
-df_busqueda["Costo_estimado_USD"] = modelo_costo.predict(
+df_busqueda["Costo_predicho_USD"] = modelo_costo.predict(
     df_busqueda[[
         "Temperatura_c",
         "Altura_capa_m_m",
@@ -480,7 +447,8 @@ df_busqueda["Costo_estimado_USD"] = modelo_costo.predict(
 )
 
 df_busqueda["Eficiencia_resistencia_costo"] = (
-    df_busqueda["Resistencia_predicha_J_m"] / df_busqueda["Costo_estimado_USD"]
+    df_busqueda["Resistencia_predicha_J_m"]
+    / df_busqueda["Costo_predicho_USD"]
 )
 
 
@@ -508,14 +476,14 @@ with tab_inicio:
     c1, c2, c3, c4 = st.columns(4)
 
     c1.metric("Datos usados", df.shape[0])
-    c2.metric("Variables de entrada", "3")
-    c3.metric("Variable de salida", "Resistencia")
-    c4.metric("Material", "PETG")
+    c2.metric("Arquitectura MLP", "3-5-1")
+    c3.metric("Material", "PETG")
+    c4.metric("Aplicación", "FDM")
 
     st.info(
-        "Esta aplicación predice la resistencia al impacto de probetas PETG impresas por FDM "
-        "a partir de la temperatura de impresión, altura de capa y velocidad. "
-        "También estima el costo productivo y muestra la relación entre resistencia y costo."
+        "Esta aplicación utiliza una red neuronal MLP 3-5-1 para predecir "
+        "la resistencia al impacto y el costo productivo de probetas PETG impresas por FDM. "
+        "El objetivo es apoyar decisiones de producción considerando desempeño mecánico y costo."
     )
 
     st.markdown("#### Parámetros de costo asumidos")
@@ -550,7 +518,7 @@ with tab_inicio:
         use_container_width=True
     )
 
-    st.markdown("#### Base de datos")
+    st.markdown("#### Base de datos experimental")
     st.dataframe(df, use_container_width=True)
 
 
@@ -559,72 +527,89 @@ with tab_inicio:
 # ============================================================
 
 with tab_modelo:
-    st.markdown("### Evaluación del modelo")
+    st.markdown("### Evaluación del modelo MLP 3-5-1")
 
-    st.markdown("#### Resultado principal")
+    st.markdown("#### Métricas de ajuste")
 
     c1, c2, c3 = st.columns(3)
 
-    c1.metric("R² validado MLP", f"{r2_mlp_validado:.4f}")
-    c2.metric("MAE validado", f"{mae_mlp_validado:.4f} J/m")
-    c3.metric("RMSE validado", f"{rmse_mlp_validado:.4f} J/m")
+    c1.metric("R² ajuste resistencia", f"{r2_resistencia:.4f}")
+    c2.metric("MAE resistencia", f"{mae_resistencia:.4f} J/m")
+    c3.metric("RMSE resistencia", f"{rmse_resistencia:.4f} J/m")
 
-    st.markdown("#### R² de ajuste demostrativo vs R² validado")
+    c4, c5, c6 = st.columns(3)
 
-    r2_comparacion = pd.DataFrame({
-        "Tipo de R²": [
-            "R² de ajuste con 20 primeros datos",
-            "R² validado con validación cruzada"
+    c4.metric("R² ajuste costo", f"{r2_costo:.4f}")
+    c5.metric("MAE costo", f"{mae_costo:.4f} USD/probeta")
+    c6.metric("RMSE costo", f"{rmse_costo:.4f} USD/probeta")
+
+    st.info(
+        "El R² mostrado corresponde a R² de ajuste. Esto significa que el modelo se entrena "
+        "y se evalúa sobre los datos experimentales disponibles. La arquitectura utilizada es "
+        "3 entradas, una capa oculta de 5 neuronas y una salida."
+    )
+
+    resumen_modelos = pd.DataFrame({
+        "Modelo": [
+            "MLP resistencia al impacto",
+            "MLP costo productivo"
         ],
-        "Valor": [
-            r2_ajuste_20,
-            r2_mlp_validado
+        "Arquitectura": [
+            "3-5-1",
+            "3-5-1"
         ],
-        "Interpretación": [
-            "Mide qué tan bien el modelo se ajusta a datos ya vistos.",
-            "Mide mejor la capacidad de predicción en datos no vistos."
+        "Tipo_R2": [
+            "R2 de ajuste",
+            "R2 de ajuste"
+        ],
+        "R2": [
+            r2_resistencia,
+            r2_costo
+        ],
+        "MAE": [
+            mae_resistencia,
+            mae_costo
+        ],
+        "RMSE": [
+            rmse_resistencia,
+            rmse_costo
+        ],
+        "Unidad_error": [
+            "J/m",
+            "USD/probeta"
         ]
     })
 
-    st.dataframe(r2_comparacion, use_container_width=True)
+    st.markdown("#### Resumen de modelos")
+    st.dataframe(resumen_modelos, use_container_width=True)
 
     fig_r2 = px.bar(
-        r2_comparacion,
-        x="Tipo de R²",
-        y="Valor",
-        text="Valor",
-        title="Comparación entre R² de ajuste y R² validado",
-        color="Tipo de R²"
+        resumen_modelos,
+        x="Modelo",
+        y="R2",
+        color="Modelo",
+        text="R2",
+        title="R² de ajuste de los modelos MLP 3-5-1",
+        labels={
+            "R2": "R² de ajuste",
+            "Modelo": "Modelo"
+        }
     )
 
     fig_r2.update_traces(texttemplate="%{text:.3f}", textposition="outside")
     fig_r2.update_layout(showlegend=False, yaxis_range=[0, 1.05])
     st.plotly_chart(fig_r2, use_container_width=True)
 
-    st.warning(
-        "El R² de ajuste puede ser alto porque se calcula sobre datos ya vistos por el modelo. "
-        "Para justificar la capacidad predictiva se debe considerar principalmente el R² validado."
-    )
+    st.markdown("#### Arquitectura de la red neuronal")
 
-    st.markdown("#### Comparación MLP vs SVR")
-    st.dataframe(comparacion_modelos, use_container_width=True)
+    st.write(
+        """
+        La red neuronal utilizada es una MLP con arquitectura **3-5-1**:
 
-    fig_modelos = px.bar(
-        comparacion_modelos,
-        x="Modelo",
-        y="R2_validado",
-        color="Modelo",
-        text="R2_validado",
-        title="Comparación de modelos mediante R² validado"
-    )
-
-    fig_modelos.update_traces(texttemplate="%{text:.3f}", textposition="outside")
-    fig_modelos.update_layout(showlegend=False, yaxis_range=[0, 1.05])
-    st.plotly_chart(fig_modelos, use_container_width=True)
-
-    st.info(
-        "La red neuronal MLP utiliza 3 entradas, dos capas ocultas de 16 y 8 neuronas, "
-        "y una salida correspondiente a la resistencia al impacto predicha."
+        **3 entradas:** temperatura de impresión, altura de capa y velocidad.  
+        **5 neuronas:** una capa oculta que aprende relaciones no lineales.  
+        **1 salida:** resistencia al impacto o costo productivo, según el modelo entrenado.
+        """
     )
 
 
@@ -637,7 +622,7 @@ with tab_explorar:
 
     st.markdown(
         "Mueve los controles para observar cómo cambian la resistencia al impacto predicha, "
-        "el costo estimado y la eficiencia resistencia/costo."
+        "el costo predicho y la eficiencia resistencia/costo."
     )
 
     col1, col2, col3 = st.columns(3)
@@ -675,22 +660,22 @@ with tab_explorar:
         "Velocidad_m_m_s": [velocidad]
     })
 
-    prediccion = modelo_final_mlp.predict(nuevo_dato)[0]
-    costo_estimado = modelo_costo.predict(nuevo_dato)[0]
-    eficiencia = prediccion / costo_estimado if costo_estimado > 0 else np.nan
+    resistencia_predicha = modelo_resistencia.predict(nuevo_dato)[0]
+    costo_predicho = modelo_costo.predict(nuevo_dato)[0]
+    eficiencia = resistencia_predicha / costo_predicho if costo_predicho > 0 else np.nan
 
     c1, c2, c3, c4, c5 = st.columns(5)
 
     c1.metric("Temperatura", f"{temperatura} °C")
     c2.metric("Altura de capa", f"{altura:.2f} mm")
     c3.metric("Velocidad", f"{velocidad} mm/s")
-    c4.metric("Resistencia predicha", f"{prediccion:.2f} J/m")
-    c5.metric("Costo estimado", f"{costo_estimado:.4f} USD")
+    c4.metric("Resistencia predicha", f"{resistencia_predicha:.2f} J/m")
+    c5.metric("Costo predicho", f"{costo_predicho:.4f} USD")
 
-    st.info(
-        f"Con estos parámetros, el modelo estima una resistencia al impacto de "
-        f"{prediccion:.2f} J/m y un costo aproximado de impresión de "
-        f"{costo_estimado:.4f} USD por probeta. "
+    st.success(
+        f"Con estos parámetros, el modelo MLP 3-5-1 estima una resistencia al impacto de "
+        f"{resistencia_predicha:.2f} J/m y un costo productivo de "
+        f"{costo_predicho:.4f} USD por probeta. "
         f"La eficiencia resistencia/costo es de {eficiencia:.2f} J/m por USD."
     )
 
@@ -725,6 +710,14 @@ with tab_explorar:
     st.markdown("#### Top 10 combinaciones con mayor resistencia predicha")
     st.dataframe(mejores_resistencias, use_container_width=True)
 
+    mejores_eficiencia = df_busqueda.sort_values(
+        by="Eficiencia_resistencia_costo",
+        ascending=False
+    ).head(10)
+
+    st.markdown("#### Top 10 combinaciones con mejor eficiencia resistencia/costo")
+    st.dataframe(mejores_eficiencia, use_container_width=True)
+
 
 # ============================================================
 # TAB GRÁFICAS
@@ -732,6 +725,10 @@ with tab_explorar:
 
 with tab_graficas:
     st.markdown("### Gráficas principales para exposición")
+
+    # --------------------------------------------------------
+    # 1. Resistencia real vs predicha
+    # --------------------------------------------------------
 
     st.markdown("#### 1. Resistencia real vs resistencia predicha")
 
@@ -744,8 +741,7 @@ with tab_graficas:
             "Ensayo",
             "Temperatura_c",
             "Altura_capa_m_m",
-            "Velocidad_m_m_s",
-            "Costo_total_USD"
+            "Velocidad_m_m_s"
         ],
         title="Comparación entre resistencia real y resistencia predicha",
         labels={
@@ -755,20 +751,20 @@ with tab_graficas:
         }
     )
 
-    min_val = min(
+    min_res = min(
         df_resultado["Resistencia_Izod_j_m"].min(),
         df_resultado["Resistencia_predicha_J_m"].min()
     )
 
-    max_val = max(
+    max_res = max(
         df_resultado["Resistencia_Izod_j_m"].max(),
         df_resultado["Resistencia_predicha_J_m"].max()
     )
 
     fig_real_pred.add_trace(
         go.Scatter(
-            x=[min_val, max_val],
-            y=[min_val, max_val],
+            x=[min_res, max_res],
+            y=[min_res, max_res],
             mode="lines",
             name="Línea ideal"
         )
@@ -778,17 +774,113 @@ with tab_graficas:
 
     st.caption(
         "Interpretación: los puntos más cercanos a la línea ideal indican mejores predicciones. "
-        "Si un punto está muy alejado de la línea, significa que el modelo tuvo mayor error para ese ensayo."
+        "El R² de ajuste de resistencia muestra qué tan bien el modelo reproduce los datos experimentales disponibles."
     )
 
-    st.markdown("#### 2. Error absoluto por ensayo")
+    # --------------------------------------------------------
+    # 2. Costo calculado vs costo predicho
+    # --------------------------------------------------------
 
-    df_errores = df_resultado.sort_values(by="Error_abs", ascending=False)
+    st.markdown("#### 2. Costo calculado vs costo predicho")
 
-    fig_error = px.bar(
-        df_errores,
+    fig_costo_pred = px.scatter(
+        df_resultado,
+        x="Costo_total_USD",
+        y="Costo_predicho_USD",
+        color="Tipo_Dato",
+        hover_data=[
+            "Ensayo",
+            "Temperatura_c",
+            "Altura_capa_m_m",
+            "Velocidad_m_m_s",
+            "Costo_total_USD",
+            "Costo_predicho_USD"
+        ],
+        title="Comparación entre costo calculado y costo predicho",
+        labels={
+            "Costo_total_USD": "Costo calculado (USD/probeta)",
+            "Costo_predicho_USD": "Costo predicho (USD/probeta)",
+            "Tipo_Dato": "Tipo de dato"
+        }
+    )
+
+    min_costo = min(
+        df_resultado["Costo_total_USD"].min(),
+        df_resultado["Costo_predicho_USD"].min()
+    )
+
+    max_costo = max(
+        df_resultado["Costo_total_USD"].max(),
+        df_resultado["Costo_predicho_USD"].max()
+    )
+
+    fig_costo_pred.add_trace(
+        go.Scatter(
+            x=[min_costo, max_costo],
+            y=[min_costo, max_costo],
+            mode="lines",
+            name="Línea ideal"
+        )
+    )
+
+    st.plotly_chart(fig_costo_pred, use_container_width=True)
+
+    st.caption(
+        "Interpretación: los puntos cercanos a la línea ideal indican que el modelo predice bien el costo productivo. "
+        f"El R² de ajuste del costo es {r2_costo:.4f}, con un MAE de {mae_costo:.4f} USD/probeta."
+    )
+
+    # --------------------------------------------------------
+    # 3. Relación resistencia predicha vs costo predicho
+    # --------------------------------------------------------
+
+    st.markdown("#### 3. Relación entre resistencia al impacto y costo productivo predicho")
+
+    fig_res_cost = px.scatter(
+        df_resultado,
+        x="Costo_predicho_USD",
+        y="Resistencia_predicha_J_m",
+        color="Tipo_Dato",
+        size="Velocidad_m_m_s",
+        hover_data=[
+            "Ensayo",
+            "Temperatura_c",
+            "Altura_capa_m_m",
+            "Velocidad_m_m_s",
+            "Costo_predicho_USD",
+            "Resistencia_predicha_J_m"
+        ],
+        title="Relación entre resistencia al impacto predicha y costo productivo predicho",
+        labels={
+            "Costo_predicho_USD": "Costo predicho (USD/probeta)",
+            "Resistencia_predicha_J_m": "Resistencia al impacto predicha (J/m)",
+            "Tipo_Dato": "Tipo de dato",
+            "Velocidad_m_m_s": "Velocidad"
+        }
+    )
+
+    st.plotly_chart(fig_res_cost, use_container_width=True)
+
+    st.caption(
+        "Interpretación: esta gráfica permite identificar combinaciones con alta resistencia y bajo costo. "
+        "Desde producción, se busca el mejor equilibrio técnico-productivo."
+    )
+
+    # --------------------------------------------------------
+    # 4. Error absoluto de resistencia
+    # --------------------------------------------------------
+
+    st.markdown("#### 4. Error absoluto de resistencia por ensayo")
+
+    df_errores_res = df_resultado.sort_values(
+        by="Error_abs_resistencia",
+        ascending=False
+    )
+
+    fig_error_res = px.bar(
+        df_errores_res,
         x="Ensayo",
-        y="Error_abs",
+        y="Error_abs_resistencia",
         color="Tipo_Dato",
         hover_data=[
             "Resistencia_Izod_j_m",
@@ -797,58 +889,106 @@ with tab_graficas:
             "Altura_capa_m_m",
             "Velocidad_m_m_s"
         ],
-        title="Error absoluto de predicción por ensayo",
+        title="Error absoluto de predicción de resistencia por ensayo",
         labels={
-            "Error_abs": "Error absoluto (J/m)",
+            "Error_abs_resistencia": "Error absoluto (J/m)",
             "Ensayo": "Ensayo"
         }
     )
 
-    st.plotly_chart(fig_error, use_container_width=True)
+    st.plotly_chart(fig_error_res, use_container_width=True)
 
     st.caption(
-        "Interpretación: esta gráfica muestra qué ensayos fueron más difíciles de predecir. "
-        "Barras más altas indican mayor diferencia entre la resistencia experimental y la resistencia predicha."
+        "Interpretación: las barras más altas indican ensayos donde la diferencia entre el valor experimental "
+        "y el valor predicho fue mayor."
     )
 
-    st.markdown("#### 3. Importancia de variables")
+    # --------------------------------------------------------
+    # 5. Error absoluto de costo
+    # --------------------------------------------------------
 
-    importancia = permutation_importance(
-        modelo_final_mlp,
+    st.markdown("#### 5. Error absoluto de costo por ensayo")
+
+    df_errores_costo = df_resultado.sort_values(
+        by="Error_abs_costo_USD",
+        ascending=False
+    )
+
+    fig_error_costo = px.bar(
+        df_errores_costo,
+        x="Ensayo",
+        y="Error_abs_costo_USD",
+        color="Tipo_Dato",
+        hover_data=[
+            "Costo_total_USD",
+            "Costo_predicho_USD",
+            "Temperatura_c",
+            "Altura_capa_m_m",
+            "Velocidad_m_m_s"
+        ],
+        title="Error absoluto de predicción de costo por ensayo",
+        labels={
+            "Error_abs_costo_USD": "Error absoluto de costo (USD/probeta)",
+            "Ensayo": "Ensayo"
+        }
+    )
+
+    st.plotly_chart(fig_error_costo, use_container_width=True)
+
+    st.caption(
+        "Interpretación: aunque el R² del costo es menor que el de resistencia, "
+        "el error absoluto está en el orden de centavos o fracciones de centavo por probeta."
+    )
+
+    # --------------------------------------------------------
+    # 6. Importancia de variables para resistencia
+    # --------------------------------------------------------
+
+    st.markdown("#### 6. Importancia de variables en la resistencia")
+
+    importancia_res = permutation_importance(
+        modelo_resistencia,
         X,
-        y,
+        y_resistencia,
         n_repeats=30,
         random_state=42,
         scoring="r2"
     )
 
-    df_importancia = pd.DataFrame({
+    df_importancia_res = pd.DataFrame({
         "Variable": X.columns,
-        "Importancia_media": importancia.importances_mean,
-        "Importancia_desviacion": importancia.importances_std
-    }).sort_values(by="Importancia_media", ascending=False)
+        "Importancia_media": importancia_res.importances_mean,
+        "Importancia_desviacion": importancia_res.importances_std
+    }).sort_values(
+        by="Importancia_media",
+        ascending=False
+    )
 
-    fig_importancia = px.bar(
-        df_importancia,
+    fig_importancia_res = px.bar(
+        df_importancia_res,
         x="Variable",
         y="Importancia_media",
         color="Variable",
-        title="Importancia de variables en la predicción",
+        title="Importancia de variables en la predicción de resistencia",
         labels={
             "Importancia_media": "Importancia media"
         }
     )
 
-    st.plotly_chart(fig_importancia, use_container_width=True)
+    st.plotly_chart(fig_importancia_res, use_container_width=True)
 
     st.caption(
-        "Interpretación: una variable con mayor importancia significa que, al alterarla, "
-        "el desempeño del modelo cambia más. Por eso se considera más influyente en la predicción."
+        "Interpretación: una variable con mayor importancia tiene mayor influencia en la predicción "
+        "de la resistencia al impacto."
     )
 
-    st.dataframe(df_importancia, use_container_width=True)
+    st.dataframe(df_importancia_res, use_container_width=True)
 
-    st.markdown("#### 4. Mapa de calor interactivo")
+    # --------------------------------------------------------
+    # 7. Mapa de calor de resistencia
+    # --------------------------------------------------------
+
+    st.markdown("#### 7. Mapa de calor de resistencia predicha")
 
     altura_fija = st.slider(
         "Altura de capa fija para mapa de calor (mm)",
@@ -869,7 +1009,7 @@ with tab_graficas:
         "Velocidad_m_m_s": V_grid.ravel()
     })
 
-    Z_pred = modelo_final_mlp.predict(datos_malla)
+    Z_pred = modelo_resistencia.predict(datos_malla)
     Z_grid = Z_pred.reshape(T_grid.shape)
 
     fig_heatmap = go.Figure(
@@ -892,66 +1032,37 @@ with tab_graficas:
 
     st.caption(
         "Interpretación: el color representa la resistencia al impacto predicha. "
-        "Las zonas con valores más altos indican combinaciones donde el modelo estima mayor resistencia, "
-        "manteniendo fija la altura de capa seleccionada."
+        "Permite visualizar zonas de parámetros donde el modelo estima mayor desempeño mecánico."
     )
 
-    st.markdown("#### 5. Relación entre resistencia al impacto y costo de impresión")
+    # --------------------------------------------------------
+    # 8. Eficiencia resistencia/costo
+    # --------------------------------------------------------
 
-    fig_res_cost = px.scatter(
-        df_resultado,
-        x="Costo_total_USD",
-        y="Resistencia_predicha_J_m",
-        color="Tipo_Dato",
-        size="Velocidad_m_m_s",
-        hover_data=[
-            "Ensayo",
-            "Temperatura_c",
-            "Altura_capa_m_m",
-            "Velocidad_m_m_s",
-            "Costo_total_USD",
-            "Resistencia_predicha_J_m"
-        ],
-        title="Relación entre resistencia al impacto predicha y costo de impresión",
-        labels={
-            "Costo_total_USD": "Costo de impresión por probeta (USD)",
-            "Resistencia_predicha_J_m": "Resistencia al impacto predicha (J/m)",
-            "Tipo_Dato": "Tipo de dato",
-            "Velocidad_m_m_s": "Velocidad"
-        }
-    )
-
-    st.plotly_chart(fig_res_cost, use_container_width=True)
-
-    st.caption(
-        "Interpretación: esta gráfica permite comparar desempeño mecánico y costo. "
-        "Lo ideal es buscar puntos con alta resistencia al impacto y bajo costo de impresión."
-    )
-
-    st.markdown("#### 6. Eficiencia resistencia/costo")
+    st.markdown("#### 8. Eficiencia resistencia/costo")
 
     df_eficiencia = df_resultado.sort_values(
         by="Eficiencia_resistencia_costo",
         ascending=False
     )
 
-    fig_ef = px.bar(
+    fig_eficiencia = px.bar(
         df_eficiencia,
         x="Ensayo",
         y="Eficiencia_resistencia_costo",
         color="Tipo_Dato",
-        title="Eficiencia: resistencia predicha por dólar de impresión",
+        title="Eficiencia: resistencia predicha por dólar de costo predicho",
         labels={
             "Eficiencia_resistencia_costo": "J/m por USD",
             "Ensayo": "Ensayo"
         }
     )
 
-    st.plotly_chart(fig_ef, use_container_width=True)
+    st.plotly_chart(fig_eficiencia, use_container_width=True)
 
     st.caption(
-        "Interpretación: esta gráfica muestra cuánta resistencia al impacto se obtiene por cada dólar invertido. "
-        "Barras más altas representan combinaciones más eficientes desde el punto de vista técnico-productivo."
+        "Interpretación: las barras más altas representan combinaciones con mayor resistencia obtenida "
+        "por cada dólar de costo productivo estimado."
     )
 
 
@@ -965,38 +1076,68 @@ with tab_costos:
     c1, c2, c3 = st.columns(3)
 
     c1.metric(
-        "Costo mínimo por probeta",
-        f"{df_costos['Costo_total_USD'].min():.4f} USD"
+        "Costo calculado mínimo",
+        f"{df_resultado['Costo_total_USD'].min():.4f} USD"
     )
 
     c2.metric(
-        "Costo promedio por probeta",
-        f"{df_costos['Costo_total_USD'].mean():.4f} USD"
+        "Costo calculado promedio",
+        f"{df_resultado['Costo_total_USD'].mean():.4f} USD"
     )
 
     c3.metric(
-        "Costo máximo por probeta",
-        f"{df_costos['Costo_total_USD'].max():.4f} USD"
+        "Costo calculado máximo",
+        f"{df_resultado['Costo_total_USD'].max():.4f} USD"
     )
 
-    st.markdown("#### Fórmula usada")
+    c4, c5, c6 = st.columns(3)
+
+    c4.metric(
+        "Costo predicho mínimo",
+        f"{df_resultado['Costo_predicho_USD'].min():.4f} USD"
+    )
+
+    c5.metric(
+        "Costo predicho promedio",
+        f"{df_resultado['Costo_predicho_USD'].mean():.4f} USD"
+    )
+
+    c6.metric(
+        "Costo predicho máximo",
+        f"{df_resultado['Costo_predicho_USD'].max():.4f} USD"
+    )
+
+    st.markdown("#### Fórmula base de costo calculado")
 
     st.latex(
         r"C_{pieza}=C_{material}+C_{energía}+C_{máquina}+C_{desperdicio}+C_{operador}+C_{postproceso}"
     )
 
-    st.markdown("#### Tabla de costos")
+    st.markdown("#### Tabla de costos calculados y predichos")
 
-    st.dataframe(df_costos, use_container_width=True)
+    st.dataframe(
+        df_resultado[[
+            "Ensayo",
+            "Codigo_costo",
+            "Temperatura_c",
+            "Altura_capa_m_m",
+            "Velocidad_m_m_s",
+            "Costo_total_USD",
+            "Costo_predicho_USD",
+            "Error_costo_USD",
+            "Error_abs_costo_USD"
+        ]],
+        use_container_width=True
+    )
 
-    st.markdown("#### Desglose promedio del costo")
+    st.markdown("#### Desglose promedio del costo calculado")
 
     fig_comp = px.bar(
         componentes_costo,
         x="Componente",
         y="Costo_promedio_USD",
         color="Componente",
-        title="Desglose promedio del costo productivo",
+        title="Desglose promedio del costo productivo calculado",
         labels={
             "Costo_promedio_USD": "Costo promedio (USD/probeta)"
         }
@@ -1004,22 +1145,36 @@ with tab_costos:
 
     st.plotly_chart(fig_comp, use_container_width=True)
 
-    st.markdown("#### Costo por impresión")
+    st.markdown("#### Costo calculado vs costo predicho por ensayo")
 
-    fig_costo = px.bar(
-        df_costos,
-        x="Codigo_costo",
-        y="Costo_total_USD",
-        color="Cantidad_probetas_lote",
-        title="Costo estimado por probeta",
-        labels={
-            "Codigo_costo": "Código de impresión",
-            "Costo_total_USD": "Costo por probeta (USD)",
-            "Cantidad_probetas_lote": "Cantidad/lote"
-        }
+    df_costo_orden = df_resultado.sort_values("Ensayo").copy()
+
+    fig_costo_comparativo = go.Figure()
+
+    fig_costo_comparativo.add_trace(
+        go.Bar(
+            x=df_costo_orden["Ensayo"],
+            y=df_costo_orden["Costo_total_USD"],
+            name="Costo calculado"
+        )
     )
 
-    st.plotly_chart(fig_costo, use_container_width=True)
+    fig_costo_comparativo.add_trace(
+        go.Bar(
+            x=df_costo_orden["Ensayo"],
+            y=df_costo_orden["Costo_predicho_USD"],
+            name="Costo predicho"
+        )
+    )
+
+    fig_costo_comparativo.update_layout(
+        barmode="group",
+        title="Comparación de costo calculado y costo predicho por ensayo",
+        xaxis_title="Ensayo",
+        yaxis_title="Costo (USD/probeta)"
+    )
+
+    st.plotly_chart(fig_costo_comparativo, use_container_width=True)
 
 
 # ============================================================
@@ -1029,21 +1184,53 @@ with tab_costos:
 with tab_exportar:
     st.markdown("### Exportar resultados")
 
+    resumen_modelos = pd.DataFrame({
+        "Modelo": [
+            "MLP resistencia al impacto",
+            "MLP costo productivo"
+        ],
+        "Arquitectura": [
+            "3-5-1",
+            "3-5-1"
+        ],
+        "Tipo_R2": [
+            "R2 de ajuste",
+            "R2 de ajuste"
+        ],
+        "R2": [
+            r2_resistencia,
+            r2_costo
+        ],
+        "MAE": [
+            mae_resistencia,
+            mae_costo
+        ],
+        "RMSE": [
+            rmse_resistencia,
+            rmse_costo
+        ],
+        "Unidad_error": [
+            "J/m",
+            "USD/probeta"
+        ]
+    })
+
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Datos_originales", index=False)
-        comparacion_modelos.to_excel(writer, sheet_name="Comparacion_modelos", index=False)
+        resumen_modelos.to_excel(writer, sheet_name="Resumen_modelos", index=False)
         df_resultado.to_excel(writer, sheet_name="Predicciones_costos", index=False)
-        df_costos.to_excel(writer, sheet_name="Costos", index=False)
+        df_costos.to_excel(writer, sheet_name="Costos_calculados", index=False)
         componentes_costo.to_excel(writer, sheet_name="Componentes_costo", index=False)
         recomendaciones.to_excel(writer, sheet_name="Prediccion_inversa", index=False)
         mejores_resistencias.to_excel(writer, sheet_name="Mejores_resistencias", index=False)
+        mejores_eficiencia.to_excel(writer, sheet_name="Mejor_eficiencia", index=False)
 
     st.download_button(
         label="Descargar resultados en Excel",
         data=output.getvalue(),
-        file_name="resultados_petg_resistencia_costo.xlsx",
+        file_name="resultados_petg_mlp_351.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
@@ -1051,22 +1238,24 @@ with tab_exportar:
 
     st.write(
         f"""
-        El modelo principal corresponde a una red neuronal artificial MLP con tres variables de entrada:
-        temperatura de impresión, altura de capa y velocidad de impresión. La variable de salida es la
-        resistencia al impacto predicha.
+        El modelo principal corresponde a una red neuronal artificial MLP de arquitectura 3-5-1.
+        Esta arquitectura utiliza tres variables de entrada: temperatura de impresión, altura de capa
+        y velocidad de impresión. La capa oculta posee cinco neuronas y la salida corresponde a la
+        variable predicha.
 
-        La red neuronal utiliza dos capas ocultas de 16 y 8 neuronas. Para evaluar el desempeño se muestran
-        dos métricas: un R² de ajuste calculado con los 20 primeros datos y un R² validado mediante validación
-        cruzada repetida. El R² de ajuste permite visualizar la capacidad del modelo para representar datos ya
-        conocidos, mientras que el R² validado representa mejor la capacidad predictiva frente a datos no vistos.
+        Se entrenaron dos modelos con la misma arquitectura:
+        uno para predecir la resistencia al impacto y otro para predecir el costo productivo.
 
-        R² de ajuste con 20 primeros datos: {r2_ajuste_20:.4f}  
-        R² validado MLP: {r2_mlp_validado:.4f}  
-        MAE validado MLP: {mae_mlp_validado:.4f} J/m  
-        RMSE validado MLP: {rmse_mlp_validado:.4f} J/m  
+        R² de ajuste resistencia al impacto: {r2_resistencia:.4f}  
+        MAE resistencia: {mae_resistencia:.4f} J/m  
+        RMSE resistencia: {rmse_resistencia:.4f} J/m  
 
-        Además, se incorpora una estimación de costo productivo por probeta considerando material, energía,
-        uso de máquina y desperdicio. Esto permite visualizar la relación entre resistencia al impacto y costo
-        de impresión.
+        R² de ajuste costo productivo: {r2_costo:.4f}  
+        MAE costo: {mae_costo:.4f} USD/probeta  
+        RMSE costo: {rmse_costo:.4f} USD/probeta  
+
+        Desde Ingeniería de la Producción, la herramienta permite relacionar parámetros de impresión,
+        desempeño mecánico y costo productivo para apoyar la selección de condiciones de fabricación
+        más eficientes.
         """
     )
